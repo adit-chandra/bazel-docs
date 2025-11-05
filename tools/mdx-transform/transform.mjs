@@ -19,10 +19,32 @@ import {toText} from 'hast-util-to-text';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const cloneNode = (node) => {
+  if (typeof structuredClone === 'function') {
+    return structuredClone(node);
+  }
+  return JSON.parse(JSON.stringify(node));
+};
+
 const remarkBase = unified()
   .use(remarkParse)
   .use(remarkFrontmatter, ['yaml'])
   .use(remarkGfm);
+
+const remarkStringifyOptions = {
+  bullet: '-',
+  fences: true,
+  entities: {useNamedReferences: true},
+  listItemIndent: 'one',
+  allowDangerousHtml: true,
+};
+
+const stringifyMarkdown = (tree) => unified()
+  .use(remarkGfm)
+  .use(remarkStringify, remarkStringifyOptions)
+  .stringify(tree);
+
+const escapeAttribute = (value) => value.replace(/"/g, '&quot;');
 
 function escapeYaml(str) {
   return str.replace(/'/g, "''");
@@ -120,13 +142,10 @@ function sanitizeMdast(tree) {
           });
         if (node.type === 'code' || node.type === 'inlineCode') {
           value = value.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        }
-        if (node.type === 'text') {
-          value = value
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/\{/g, '&#123;')
-            .replace(/\}/g, '&#125;');
+        } else if (node.type === 'text') {
+          value = value.replace(/#include <([^>]+)>/g, (_match, header) => `#include &lt;${header}&gt;`);
+          value = value.replace(/(^|[^\\])\{/g, (_match, lead) => `${lead}\\{`);
+          value = value.replace(/(^|[^\\])\}/g, (_match, lead) => `${lead}\\}`);
         }
         node.value = value;
       }
@@ -255,10 +274,17 @@ export function rehypeCustom() {
           if (compare) {
             const type = compare === 'compare-better' ? 'success' : 'warning';
             const title = toText(first).replace(/[–—-]\s*$/,'').trim() || (type === 'success' ? 'Yes' : 'No');
-            const bodyNodes = node.children.slice(1);
-            const bodyText = toText({type: 'element', tagName: 'div', children: bodyNodes}).trim();
-            const callout = `<Callout type="${type}" title="${title}">${bodyText ? '\n' + bodyText + '\n' : ''}</Callout>`;
-            parent.children[index] = {type: 'raw', value: callout};
+            const bodyNodes = node.children.slice(1).map(cloneNode);
+            if (bodyNodes.length) {
+              const firstBody = bodyNodes[0];
+              if (firstBody.type === 'text') {
+                firstBody.value = firstBody.value.replace(/^[-\s:–—]+/, '').trimStart();
+              }
+            }
+            const bodyTree = toMdast({type: 'element', tagName: 'div', children: bodyNodes}, {});
+            const bodyMarkdown = stringifyMarkdown(bodyTree).trim();
+            const callout = `<Callout type="${type}" title="${escapeAttribute(title)}">${bodyMarkdown ? `\n${bodyMarkdown}\n` : ''}</Callout>`;
+            parent.children.splice(index, 1, {type: 'raw', value: callout});
             return [visit.SKIP, index];
           }
         }
@@ -273,9 +299,9 @@ export function rehypeCustom() {
           if (compare) {
             const icon = compare === 'compare-better' ? '✅' : '⚠️';
             const label = toText(first).trim();
-            const rest = node.children.slice(1);
-            const restText = toText({type: 'element', tagName: 'div', children: rest}).trim();
-            node.children = [{type: 'text', value: `${icon} ${label}:${restText ? ' ' + restText : ''}`}];
+            const rest = node.children.slice(1).map(cloneNode);
+            const prefix = rest.length ? `${icon} ${label}: ` : `${icon} ${label}`;
+            node.children = [{type: 'text', value: prefix}, ...rest];
           }
         }
       }
@@ -309,16 +335,7 @@ export function transformContent(content) {
   const mdastResult = toMdast(hast, {});
   sanitizeMdast(mdastResult);
 
-  let output = unified()
-    .use(remarkGfm)
-    .use(remarkStringify, {
-      bullet: '-',
-      fences: true,
-      entities: {useNamedReferences: true},
-      listItemIndent: 'one',
-      allowDangerousHtml: true,
-    })
-    .stringify(mdastResult);
+  let output = stringifyMarkdown(mdastResult);
   output = output.replace(/\n{3,}/g, '\n\n');
   if (file.data.frontmatter) {
     output = `---\n${file.data.frontmatter}\n---\n\n${output}`;
@@ -333,6 +350,7 @@ export function transformContent(content) {
     })
     .replace(/https\\:\/\//g, 'https://')
     .replace(/http\\:\/\//g, 'http://');
+  output = output.replace(/\\([{}])/g, '\$1');
   return output;
 }
 
@@ -350,7 +368,7 @@ function runCli() {
   fs.writeFileSync(absoluteOutput, transformed, 'utf8');
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   runCli();
 }
 
