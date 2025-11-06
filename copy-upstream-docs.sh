@@ -52,9 +52,9 @@ transform_docs() {
 
         mkdir -p "$target_dir"
 
-    # Highlight files that previously needed manual fixes
+    # Check if this file is in the BROKEN_FILES list
         if echo "$BROKEN_FILES" | grep -q "^$target_file$"; then
-            echo "Processing previously broken file: $target_file"
+            echo "Skipping broken file: $target_file"
         fi
 
     # Transform and copy the file
@@ -67,13 +67,9 @@ transform_docs() {
 transform_docs "$UPSTREAM_SITE"
 transform_docs "$REFERENCE_DOCS"
 
-if command -v yq >/dev/null 2>&1; then
-    echo "Converting community YAML files to MDX..."
-    ./convert-community-to-mdx.sh "$DEST_DIR/community/experts"
-    ./convert-community-to-mdx.sh "$DEST_DIR/community/partners"
-else
-    echo "Skipping community YAML conversion because 'yq' was not found in PATH."
-fi
+echo "Converting community YAML files to MDX..."
+./convert-community-to-mdx.sh "$DEST_DIR/community/experts"
+./convert-community-to-mdx.sh "$DEST_DIR/community/partners"
 
 echo "Copying community images..."
 mkdir -p "$DEST_DIR/community/images"
