@@ -55,6 +55,7 @@ transform_docs() {
     # Check if this file is in the BROKEN_FILES list
         if echo "$BROKEN_FILES" | grep -q "^$target_file$"; then
             echo "Skipping broken file: $target_file"
+            continue
         fi
 
     # Transform and copy the file
